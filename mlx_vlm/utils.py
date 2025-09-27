@@ -25,7 +25,7 @@ from transformers import AutoProcessor
 from transformers.processing_utils import ProcessorMixin
 
 from .models.base import BaseImageProcessor
-from .quant_utils import QUANTIZATION_MODE_DEFAULTS
+from .quant_utils import QUANTIZATION_MODE_DEFAULTS, get_total_parameters
 from .quantization.checkpoint import (
     merge_quantization_configs,
     transform_quantized_weights,
@@ -1229,12 +1229,14 @@ def save_weights(
     model: nn.Module,
     *,
     donate_weights: bool = False,
+    index_only: bool = False,
 ) -> None:
     """Save model weights into specified directory."""
     if isinstance(save_path, str):
         save_path = Path(save_path)
 
     weights = dict(tree_flatten(model.parameters()))
+    total_parameters = get_total_parameters(model)
 
     save_path.mkdir(parents=True, exist_ok=True)
 
@@ -1247,7 +1249,13 @@ def save_weights(
     )
 
     total_size = sum(v.nbytes for v in weights.values())
-    index_data = {"metadata": {"total_size": total_size}, "weight_map": {}}
+    index_data = {
+        "metadata": {
+            "total_size": total_size,
+            "total_parameters": total_parameters,
+        },
+        "weight_map": {},
+    }
 
     # Write the weights and make sure no references are kept other than the
     # necessary ones
@@ -1263,7 +1271,8 @@ def save_weights(
         shard_name = shard_file_format.format(i + 1, shards_count)
         shard_path = save_path / shard_name
 
-        mx.save_safetensors(str(shard_path), shard, metadata={"format": "mlx"})
+        if not index_only:
+            mx.save_safetensors(str(shard_path), shard, metadata={"format": "mlx"})
 
         for weight_name in shard.keys():
             index_data["weight_map"][weight_name] = shard_name
