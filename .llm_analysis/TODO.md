@@ -1,0 +1,259 @@
+# Code Reading TODO / Progress
+
+Status: analysis completed for all tracked files **except** the deferred directories below (per user request): `.github/`, `docs/`, `mlx_vlm/models/`, `mlx_vlm/tests/`.
+
+- [x] ./mkdocs.yml
+- [x] ./LICENSE
+- [x] ./requirements.txt
+- [x] ./.pre-commit-config.yaml
+- [x] ./pyproject.toml
+- [x] ./README.md
+- [x] ./.gitignore
+- [x] ./CONTRIBUTING.md
+- [x] ./examples/multi_image_generation.ipynb
+- [x] ./examples/omni.py
+- [x] ./examples/interleaved_text_images.ipynb
+- [x] ./examples/qwen3_omni_demo.py
+- [x] ./examples/video_understanding.ipynb
+- [x] ./examples/object_pointing_molmo2.ipynb
+- [x] ./examples/object_pointing.ipynb
+- [x] ./examples/utils.py
+- [x] ./examples/text_extraction.ipynb
+- [x] ./examples/ocr_with_region.ipynb
+- [x] ./examples/object_detection.ipynb
+- [x] ./mlx_vlm/evals/mmmu.py
+- [x] ./mlx_vlm/evals/__init__.py
+- [x] ./mlx_vlm/evals/utils.py
+- [x] ./mlx_vlm/evals/mmstar.py
+- [x] ./mlx_vlm/evals/ocrbench.py
+- [x] ./mlx_vlm/evals/math_vista.py
+- [x] ./mlx_vlm/server.py
+- [x] ./mlx_vlm/version.py
+- [x] ./mlx_vlm/generate.py
+- [x] ./mlx_vlm/deprecation.py
+- [x] ./mlx_vlm/tokenizer_utils.py
+- [x] ./mlx_vlm/convert.py
+- [ ] ./mlx_vlm/tests/test_kv_cache_quantization.py
+- [ ] ./mlx_vlm/tests/test_utils.py
+- [ ] ./mlx_vlm/tests/test_generate.py
+- [ ] ./mlx_vlm/tests/test_trainer_utils.py
+- [ ] ./mlx_vlm/tests/test_models.py
+- [ ] ./mlx_vlm/tests/test_trainer.py
+- [ ] ./mlx_vlm/tests/smoke.py
+- [x] ./mlx_vlm/LORA.MD
+- [x] ./mlx_vlm/__init__.py
+- [ ] ./mlx_vlm/models/llama4/llama4.py
+- [ ] ./mlx_vlm/models/llama4/config.py
+- [ ] ./mlx_vlm/models/llama4/vision.py
+- [ ] ./mlx_vlm/models/llama4/__init__.py
+- [ ] ./mlx_vlm/models/llama4/language.py
+- [ ] ./mlx_vlm/models/pixtral/config.py
+- [ ] ./mlx_vlm/models/pixtral/vision.py
+- [ ] ./mlx_vlm/models/pixtral/pixtral.py
+- [ ] ./mlx_vlm/models/pixtral/__init__.py
+- [ ] ./mlx_vlm/models/pixtral/language.py
+- [ ] ./mlx_vlm/models/mllama/config.py
+- [ ] ./mlx_vlm/models/mllama/vision.py
+- [ ] ./mlx_vlm/models/mllama/__init__.py
+- [ ] ./mlx_vlm/models/mllama/mllama.py
+- [ ] ./mlx_vlm/models/mllama/language.py
+- [ ] ./mlx_vlm/models/llava_bunny/config.py
+- [ ] ./mlx_vlm/models/llava_bunny/vision.py
+- [ ] ./mlx_vlm/models/llava_bunny/__init__.py
+- [ ] ./mlx_vlm/models/llava_bunny/language.py
+- [ ] ./mlx_vlm/models/llava_bunny/llava_bunny.py
+- [ ] ./mlx_vlm/models/hunyuan_vl/config.py
+- [ ] ./mlx_vlm/models/hunyuan_vl/vision.py
+- [ ] ./mlx_vlm/models/hunyuan_vl/__init__.py
+- [ ] ./mlx_vlm/models/hunyuan_vl/language.py
+- [ ] ./mlx_vlm/models/hunyuan_vl/processing_hunyuan_vl.py
+- [ ] ./mlx_vlm/models/hunyuan_vl/hunyuan_vl.py
+- [ ] ./mlx_vlm/models/gemma3/config.py
+- [ ] ./mlx_vlm/models/gemma3/vision.py
+- [ ] ./mlx_vlm/models/gemma3/__init__.py
+- [ ] ./mlx_vlm/models/gemma3/gemma3.py
+- [ ] ./mlx_vlm/models/gemma3/language.py
+- [ ] ./mlx_vlm/models/molmo/molmo.py
+- [ ] ./mlx_vlm/models/molmo/config.py
+- [ ] ./mlx_vlm/models/molmo/vision.py
+- [ ] ./mlx_vlm/models/molmo/__init__.py
+- [ ] ./mlx_vlm/models/molmo/language.py
+- [ ] ./mlx_vlm/models/deepseek_vl_v2/config.py
+- [ ] ./mlx_vlm/models/deepseek_vl_v2/vision.py
+- [ ] ./mlx_vlm/models/deepseek_vl_v2/conversation.py
+- [ ] ./mlx_vlm/models/deepseek_vl_v2/processing_deepsek_vl_v2.py
+- [ ] ./mlx_vlm/models/deepseek_vl_v2/__init__.py
+- [ ] ./mlx_vlm/models/deepseek_vl_v2/language.py
+- [ ] ./mlx_vlm/models/deepseek_vl_v2/deepseek_vl_v2.py
+- [ ] ./mlx_vlm/models/cache.py
+- [ ] ./mlx_vlm/models/__init__.py
+- [ ] ./mlx_vlm/models/qwen2_5_vl/config.py
+- [ ] ./mlx_vlm/models/qwen2_5_vl/vision.py
+- [ ] ./mlx_vlm/models/qwen2_5_vl/qwen2_5_vl.py
+- [ ] ./mlx_vlm/models/qwen2_5_vl/__init__.py
+- [ ] ./mlx_vlm/models/qwen2_5_vl/language.py
+- [ ] ./mlx_vlm/models/lfm2_vl/lfm2_vl.py
+- [ ] ./mlx_vlm/models/lfm2_vl/config.py
+- [ ] ./mlx_vlm/models/lfm2_vl/vision.py
+- [ ] ./mlx_vlm/models/lfm2_vl/__init__.py
+- [ ] ./mlx_vlm/models/lfm2_vl/language.py
+- [ ] ./mlx_vlm/models/gemma3n/config.py
+- [ ] ./mlx_vlm/models/gemma3n/gemma3n.py
+- [ ] ./mlx_vlm/models/gemma3n/vision.py
+- [ ] ./mlx_vlm/models/gemma3n/__init__.py
+- [ ] ./mlx_vlm/models/gemma3n/language.py
+- [ ] ./mlx_vlm/models/gemma3n/audio.py
+- [ ] ./mlx_vlm/models/fastvlm/config.py
+- [ ] ./mlx_vlm/models/fastvlm/vision.py
+- [ ] ./mlx_vlm/models/fastvlm/fastvlm.py
+- [ ] ./mlx_vlm/models/fastvlm/__init__.py
+- [ ] ./mlx_vlm/models/fastvlm/language.py
+- [ ] ./mlx_vlm/models/paligemma/config.py
+- [ ] ./mlx_vlm/models/paligemma/paligemma.py
+- [ ] ./mlx_vlm/models/paligemma/vision.py
+- [ ] ./mlx_vlm/models/paligemma/__init__.py
+- [ ] ./mlx_vlm/models/paligemma/language.py
+- [ ] ./mlx_vlm/models/phi3_v/phi3_v.py
+- [ ] ./mlx_vlm/models/phi3_v/config.py
+- [ ] ./mlx_vlm/models/phi3_v/vision.py
+- [ ] ./mlx_vlm/models/phi3_v/su_rope.py
+- [ ] ./mlx_vlm/models/phi3_v/__init__.py
+- [ ] ./mlx_vlm/models/phi3_v/language.py
+- [ ] ./mlx_vlm/models/kimi_vl/config.py
+- [ ] ./mlx_vlm/models/kimi_vl/vision.py
+- [ ] ./mlx_vlm/models/kimi_vl/__init__.py
+- [ ] ./mlx_vlm/models/kimi_vl/language.py
+- [ ] ./mlx_vlm/models/kimi_vl/kimi_vl.py
+- [ ] ./mlx_vlm/models/mistral3/config.py
+- [ ] ./mlx_vlm/models/mistral3/mistral3.py
+- [ ] ./mlx_vlm/models/mistral3/__init__.py
+- [ ] ./mlx_vlm/models/mistral3/language.py
+- [ ] ./mlx_vlm/models/idefics3/config.py
+- [ ] ./mlx_vlm/models/idefics3/vision.py
+- [ ] ./mlx_vlm/models/idefics3/__init__.py
+- [ ] ./mlx_vlm/models/idefics3/language.py
+- [ ] ./mlx_vlm/models/idefics3/idefics3.py
+- [ ] ./mlx_vlm/models/deepseekocr/processing_deepseekocr.py
+- [ ] ./mlx_vlm/models/deepseekocr/config.py
+- [ ] ./mlx_vlm/models/deepseekocr/vision.py
+- [ ] ./mlx_vlm/models/deepseekocr/conversation.py
+- [ ] ./mlx_vlm/models/deepseekocr/__init__.py
+- [ ] ./mlx_vlm/models/deepseekocr/language.py
+- [ ] ./mlx_vlm/models/deepseekocr/deepseekocr.py
+- [ ] ./mlx_vlm/models/deepseekocr/sam.py
+- [ ] ./mlx_vlm/models/kernels.py
+- [ ] ./mlx_vlm/models/smolvlm/config.py
+- [ ] ./mlx_vlm/models/smolvlm/__init__.py
+- [ ] ./mlx_vlm/models/smolvlm/smolvlm.py
+- [ ] ./mlx_vlm/models/idefics2/config.py
+- [ ] ./mlx_vlm/models/idefics2/vision.py
+- [ ] ./mlx_vlm/models/idefics2/__init__.py
+- [ ] ./mlx_vlm/models/idefics2/language.py
+- [ ] ./mlx_vlm/models/idefics2/idefics2.py
+- [ ] ./mlx_vlm/models/llava_next/config.py
+- [ ] ./mlx_vlm/models/llava_next/vision.py
+- [ ] ./mlx_vlm/models/llava_next/__init__.py
+- [ ] ./mlx_vlm/models/llava_next/language.py
+- [ ] ./mlx_vlm/models/llava_next/llava_next.py
+- [ ] ./mlx_vlm/models/interpolate.py
+- [ ] ./mlx_vlm/models/jina_vlm/image_processor.py
+- [ ] ./mlx_vlm/models/jina_vlm/config.py
+- [ ] ./mlx_vlm/models/jina_vlm/jina_vlm.py
+- [ ] ./mlx_vlm/models/jina_vlm/vision.py
+- [ ] ./mlx_vlm/models/jina_vlm/__init__.py
+- [ ] ./mlx_vlm/models/jina_vlm/language.py
+- [ ] ./mlx_vlm/models/jina_vlm/processing_jinavlm.py
+- [ ] ./mlx_vlm/models/aya_vision/config.py
+- [ ] ./mlx_vlm/models/aya_vision/vision.py
+- [ ] ./mlx_vlm/models/aya_vision/__init__.py
+- [ ] ./mlx_vlm/models/aya_vision/language.py
+- [ ] ./mlx_vlm/models/aya_vision/aya_vision.py
+- [ ] ./mlx_vlm/models/glm4v_moe/config.py
+- [ ] ./mlx_vlm/models/glm4v_moe/vision.py
+- [ ] ./mlx_vlm/models/glm4v_moe/__init__.py
+- [ ] ./mlx_vlm/models/glm4v_moe/language.py
+- [ ] ./mlx_vlm/models/glm4v_moe/glm4v_moe.py
+- [ ] ./mlx_vlm/models/glm4v_moe/processing.py
+- [ ] ./mlx_vlm/models/qwen3_vl_moe/qwen3_vl_moe.py
+- [ ] ./mlx_vlm/models/qwen3_vl_moe/config.py
+- [ ] ./mlx_vlm/models/qwen3_vl_moe/vision.py
+- [ ] ./mlx_vlm/models/qwen3_vl_moe/__init__.py
+- [ ] ./mlx_vlm/models/qwen3_vl_moe/language.py
+- [ ] ./mlx_vlm/models/qwen2_vl/qwen2_vl.py
+- [ ] ./mlx_vlm/models/qwen2_vl/config.py
+- [ ] ./mlx_vlm/models/qwen2_vl/vision.py
+- [ ] ./mlx_vlm/models/qwen2_vl/__init__.py
+- [ ] ./mlx_vlm/models/qwen2_vl/language.py
+- [ ] ./mlx_vlm/models/florence2/config.py
+- [ ] ./mlx_vlm/models/florence2/vision.py
+- [ ] ./mlx_vlm/models/florence2/__init__.py
+- [ ] ./mlx_vlm/models/florence2/florence2.py
+- [ ] ./mlx_vlm/models/florence2/language.py
+- [ ] ./mlx_vlm/models/llava/config.py
+- [ ] ./mlx_vlm/models/llava/vision.py
+- [ ] ./mlx_vlm/models/llava/__init__.py
+- [ ] ./mlx_vlm/models/llava/llava.py
+- [ ] ./mlx_vlm/models/llava/language.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/talker.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/config.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/qwen3_omni_moe.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/vision.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/__init__.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/code2wav.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/language.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/audio.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/thinker.py
+- [ ] ./mlx_vlm/models/qwen3_omni_moe/omni_utils.py
+- [ ] ./mlx_vlm/models/glm4v/config.py
+- [ ] ./mlx_vlm/models/glm4v/vision.py
+- [ ] ./mlx_vlm/models/glm4v/__init__.py
+- [ ] ./mlx_vlm/models/glm4v/language.py
+- [ ] ./mlx_vlm/models/glm4v/processing.py
+- [ ] ./mlx_vlm/models/glm4v/glm4v.py
+- [ ] ./mlx_vlm/models/base.py
+- [ ] ./mlx_vlm/models/internvl_chat/config.py
+- [ ] ./mlx_vlm/models/internvl_chat/vision.py
+- [ ] ./mlx_vlm/models/internvl_chat/__init__.py
+- [ ] ./mlx_vlm/models/internvl_chat/processor.py
+- [ ] ./mlx_vlm/models/internvl_chat/internvl_chat.py
+- [ ] ./mlx_vlm/models/internvl_chat/language.py
+- [ ] ./mlx_vlm/models/molmo2/config.py
+- [ ] ./mlx_vlm/models/molmo2/vision.py
+- [ ] ./mlx_vlm/models/molmo2/molmo2.py
+- [ ] ./mlx_vlm/models/molmo2/__init__.py
+- [ ] ./mlx_vlm/models/molmo2/language.py
+- [ ] ./mlx_vlm/models/molmo2/processing.py
+- [ ] ./mlx_vlm/models/qwen3_vl/config.py
+- [ ] ./mlx_vlm/models/qwen3_vl/vision.py
+- [ ] ./mlx_vlm/models/qwen3_vl/qwen3_vl.py
+- [ ] ./mlx_vlm/models/qwen3_vl/__init__.py
+- [ ] ./mlx_vlm/models/qwen3_vl/language.py
+- [ ] ./mlx_vlm/models/multi_modality/config.py
+- [ ] ./mlx_vlm/models/multi_modality/vision.py
+- [ ] ./mlx_vlm/models/multi_modality/__init__.py
+- [ ] ./mlx_vlm/models/multi_modality/language.py
+- [ ] ./mlx_vlm/models/multi_modality/multi_modality.py
+- [ ] ./mlx_vlm/models/multi_modality/sam.py
+- [x] ./mlx_vlm/chat_ui.py
+- [x] ./mlx_vlm/smolvlm_video_generate.py
+- [x] ./mlx_vlm/chat.py
+- [x] ./mlx_vlm/utils.py
+- [x] ./mlx_vlm/sample_utils.py
+- [x] ./mlx_vlm/prompt_utils.py
+- [x] ./mlx_vlm/video_generate.py
+- [x] ./mlx_vlm/lora.py
+- [x] ./mlx_vlm/__main__.py
+- [x] ./mlx_vlm/trainer/__init__.py
+- [x] ./mlx_vlm/trainer/utils.py
+- [x] ./mlx_vlm/trainer/trainer.py
+- [x] ./mlx_vlm/trainer/lora.py
+- [x] ./update_changelog.py
+- [x] ./dev/load_q.py
+- [x] ./computer_use/requirements.txt
+- [x] ./computer_use/gui_agent_voice.py
+- [x] ./computer_use/README.md
+- [x] ./computer_use/utils.py
+- [x] ./computer_use/autonomous_gui_agent.py
+- [x] ./computer_use/gui_agent.py
+- [x] ./computer_use/autonomous_gui_agent_voice.py
+- [x] ./AGENTS.md
