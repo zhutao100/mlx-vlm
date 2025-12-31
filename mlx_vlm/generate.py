@@ -13,6 +13,7 @@ from mlx_lm.generate import maybe_quantize_kv_cache
 from transformers import PreTrainedTokenizer
 
 from .models import cache
+from .prompt_cache import PromptCacheBundle, PromptCacheContext
 from .prompt_utils import apply_chat_template
 from .sample_utils import top_p_sampling
 from .utils import (
@@ -219,6 +220,7 @@ def generate_step(
     top_p: float = 1.0,
     logit_bias: Optional[Dict[int, float]] = None,
     prompt_cache: Optional[List[Any]] = None,
+    prompt_cache_bundle: Optional[PromptCacheBundle] = None,
     max_kv_size: Optional[int] = None,
     kv_bits: Optional[int] = None,
     kv_group_size: int = 64,
@@ -279,12 +281,24 @@ def generate_step(
 
     y = input_ids
 
+    if prompt_cache is not None and prompt_cache_bundle is not None:
+        raise ValueError("Provide only one of prompt_cache or prompt_cache_bundle")
+
+    cached_context: Optional[PromptCacheContext] = None
+    if prompt_cache_bundle is not None:
+        prompt_cache = prompt_cache_bundle.kv_cache
+        cached_context = prompt_cache_bundle.context
+        if not prompt_cache:
+            prompt_cache = None
+
     # Create the KV cache for generation
     if prompt_cache is None:
         prompt_cache = cache.make_prompt_cache(
             model.language_model,
             max_kv_size=max_kv_size,
         )
+        if prompt_cache_bundle is not None:
+            prompt_cache_bundle.kv_cache = prompt_cache
 
     repetition_context = input_ids.reshape(-1).tolist()
 
@@ -324,25 +338,56 @@ def generate_step(
             quantize_cache_fn(prompt_cache)
             return y, logprobs.squeeze(0)
 
-    outputs = model(input_ids, pixel_values, cache=prompt_cache, mask=mask, **kwargs)
+    if pixel_values is None and cached_context is not None:
+        if cached_context.kind == "cross_attention_states":
+            outputs = model.language_model(
+                input_ids,
+                cache=prompt_cache,
+                mask=mask,
+                cross_attention_states=cached_context.data,
+                **kwargs,
+            )
+        elif cached_context.kind == "encoder_outputs":
+            decoder_start_token_id = getattr(model.config, "decoder_start_token_id", 0)
+            if decoder_start_token_id is None:
+                decoder_start_token_id = 0
+            decoder_input_ids = mx.array([[decoder_start_token_id]], dtype=mx.int32)
+            outputs = model.language_model(
+                cache=prompt_cache,
+                decoder_input_ids=decoder_input_ids,
+                encoder_outputs=cached_context.data,
+            )
+        else:
+            raise ValueError(f"Unsupported cached context kind: {cached_context.kind}")
+    else:
+        outputs = model(
+            input_ids, pixel_values, cache=prompt_cache, mask=mask, **kwargs
+        )
 
     logits = outputs.logits[:, -1, :]
     quantize_cache_fn(prompt_cache)
     y, logprobs = sample(logits)
     mx.async_eval(y)
 
+    active_context: Optional[PromptCacheContext] = None
     if outputs.cross_attention_states is not None:
-        kwargs = {
-            k: v
-            for k, v in zip(
-                ["cross_attention_states"], [outputs.cross_attention_states]
-            )
-        }
+        active_context = PromptCacheContext(
+            kind="cross_attention_states", data=outputs.cross_attention_states
+        )
     elif outputs.encoder_outputs is not None:
-        kwargs = {
-            "decoder_input_ids": y[None],
-            "encoder_outputs": outputs.encoder_outputs,
-        }
+        active_context = PromptCacheContext(
+            kind="encoder_outputs", data=outputs.encoder_outputs
+        )
+    elif cached_context is not None:
+        active_context = cached_context
+
+    if prompt_cache_bundle is not None and active_context is not None:
+        prompt_cache_bundle.context = active_context
+
+    if active_context is not None and active_context.kind == "cross_attention_states":
+        kwargs = {"cross_attention_states": active_context.data}
+    elif active_context is not None and active_context.kind == "encoder_outputs":
+        kwargs = {"decoder_input_ids": y[None], "encoder_outputs": active_context.data}
     else:
         kwargs = {}
 
