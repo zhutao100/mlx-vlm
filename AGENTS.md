@@ -1,7 +1,7 @@
 # Project context
 - Some core libraries in this project were implemented referring to the `mlx-lm` project, which
   - is accessible locally at `~/workspace/custom-builds/mlx-lm`
-  - is hosted at `https://github.com/ml-explore/mlx`
+  - is hosted at `https://github.com/ml-explore/mlx-lm`
   - refer to it when analyzing the core library implementations in this project.
 
 # Useful resources
