@@ -9,6 +9,7 @@ from .generate import (
     generate,
     stream_generate,
 )
+from .prompt_cache import PromptCacheBundle, PromptCacheContext, PromptCacheMetadata
 from .prompt_utils import apply_chat_template, get_message_json
 from .utils import load, prepare_inputs, process_image
 from .version import __version__
