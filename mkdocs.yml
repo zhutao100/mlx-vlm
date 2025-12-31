@@ -84,6 +84,7 @@ nav:
     - Home: index.md
     - Installation: installation.md
     - CLI Reference: cli_reference.md
+    - Prompt Caching (Planned): prompt_caching.md
     - Examples: examples.md
     - Contributing: contributing.md
     - Community Projects: community_projects.md
