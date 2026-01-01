@@ -13,7 +13,12 @@ from mlx_lm.generate import maybe_quantize_kv_cache
 from transformers import PreTrainedTokenizer
 
 from .models import cache
-from .prompt_cache import PromptCacheBundle, PromptCacheContext
+from .prompt_cache import (
+    PromptCacheBundle,
+    PromptCacheContext,
+    capture_language_model_state,
+    restore_language_model_state,
+)
 from .prompt_utils import apply_chat_template
 from .sample_utils import top_p_sampling
 from .utils import (
@@ -286,10 +291,67 @@ def generate_step(
 
     cached_context: Optional[PromptCacheContext] = None
     if prompt_cache_bundle is not None:
+        restore_language_model_state(
+            model.language_model,
+            prompt_cache_bundle.model_state,
+        )
         prompt_cache = prompt_cache_bundle.kv_cache
         cached_context = prompt_cache_bundle.context
         if not prompt_cache:
             prompt_cache = None
+
+    def _cache_has_tokens(c: Any) -> bool:
+        if c is None:
+            return False
+        if isinstance(c, (list, tuple)):
+            return any(_cache_has_tokens(x) for x in c)
+
+        offset = getattr(c, "offset", None)
+        if offset is not None:
+            if isinstance(offset, mx.array):
+                offset = (offset if offset.ndim == 0 else offset[0]).item()
+            try:
+                return int(offset) > 0
+            except (TypeError, ValueError):
+                return False
+
+        cache_length = getattr(c, "cache_length", None)
+        if cache_length is not None:
+            try:
+                return int(cache_length) > 0
+            except (TypeError, ValueError):
+                return False
+
+        try:
+            return len(c) > 0
+        except TypeError:
+            return False
+
+    def _prompt_cache_has_tokens(prompt_cache: Optional[List[Any]]) -> bool:
+        return bool(prompt_cache) and any(_cache_has_tokens(c) for c in prompt_cache)
+
+    using_cached_prefix = _prompt_cache_has_tokens(prompt_cache)
+    if pixel_values is None and using_cached_prefix and hasattr(model, "config"):
+        token_ids: set[int] = set()
+        for attr in (
+            "image_token_id",
+            "image_token_index",
+            "video_token_id",
+            "video_token_index",
+        ):
+            value = getattr(model.config, attr, None)
+            if isinstance(value, int):
+                token_ids.add(value)
+            elif isinstance(value, (list, tuple, set)):
+                token_ids.update(v for v in value if isinstance(v, int))
+
+        if token_ids:
+            flat_tokens = input_ids.reshape(-1).tolist()
+            if any(t in token_ids for t in flat_tokens):
+                raise ValueError(
+                    "Prompt cache reuse requires append-only suffix tokens; "
+                    "received image/video placeholder token(s) but pixel_values is None."
+                )
 
     # Create the KV cache for generation
     if prompt_cache is None:
@@ -381,8 +443,12 @@ def generate_step(
     elif cached_context is not None:
         active_context = cached_context
 
-    if prompt_cache_bundle is not None and active_context is not None:
-        prompt_cache_bundle.context = active_context
+    if prompt_cache_bundle is not None:
+        if active_context is not None:
+            prompt_cache_bundle.context = active_context
+        prompt_cache_bundle.model_state.update(
+            capture_language_model_state(model.language_model)
+        )
 
     if active_context is not None and active_context.kind == "cross_attention_states":
         kwargs = {"cross_attention_states": active_context.data}

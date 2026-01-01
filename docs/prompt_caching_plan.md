@@ -23,6 +23,7 @@ Add a single internal representation so the rest of the code stays model-agnosti
   - `PromptCacheBundle`
     - `kv_cache: list[Any]` (existing per-layer caches)
     - `context: VisionContext | None` (see below)
+    - `model_state: dict[str, Any]` (non-KV per-session LM state, e.g. M-RoPE deltas)
     - `tokens_processed: int` (how many prompt tokens the KV represents)
     - `metadata: PromptCacheMetadata` (validation + debugging)
   - `VisionContext`
@@ -42,6 +43,13 @@ Key design point: `VisionContext` is the “adapter” layer that avoids generat
 ## Phase 2 — Make `generate_step` Cache-Aware for Multimodal Context
 Today `generate_step` only *discovers* context from the first forward pass and then uses it inside the same call. We need it to optionally *reuse* a previously stored context across turns/runs.
 
+### Model pattern reality check (drives Phase 2.1)
+Not all VLM families expose `cross_attention_states` or `encoder_outputs`. In this repo there are (at least) three practical categories:
+
+- **Context-tensor models**: require cached `cross_attention_states` or `encoder_outputs` for correct decode when media inputs are not resent.
+- **Embedding-injection models**: image/video influence is “baked into” the prefix KV cache; no extra decode-time tensors exist.
+- **Embedding-injection + M-RoPE models** (e.g. Qwen*, GLM4V*): correctness depends on mutable per-instance LM state like `language_model._rope_deltas`, which must be treated as part of the cache bundle for safe reuse across sessions/processes.
+
 - Update `mlx_vlm/generate.py:209` (`generate_step`) to accept **either**:
   - `prompt_cache_bundle: PromptCacheBundle | None` (preferred), **or**
   - keep existing `prompt_cache: list[Any] | None` and add `prefill_context: VisionContext | None`
@@ -53,6 +61,15 @@ Today `generate_step` only *discovers* context from the first forward pass and t
 
 Acceptance criteria for this phase:
 - A follow-up generation call with `pixel_values=None` can still decode with the original image/video context if the cached `VisionContext` is provided.
+
+### Phase 2.1 — Capture/Restore LM Instance State + Safety Guard
+To support embedding-injection families (especially M-RoPE variants) without relying on a single global model instance:
+
+- Capture/restore **LM instance state** into/from `PromptCacheBundle.model_state`:
+  - initial supported key: `rope_deltas` (mirrors `language_model._rope_deltas` used by Qwen*/GLM4V*).
+- Add a **safety guard** when reusing a cached prefix with `pixel_values=None`:
+  - if the provided `input_ids` include image/video placeholder token ids (from `model.config`), reject the call with a clear error
+  - rationale: embedding-injection models must not recompute placeholder tokens without media inputs (hunyuan_vl, deepseekocr, Qwen*, GLM4V*).
 
 ---
 
