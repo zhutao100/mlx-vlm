@@ -19,7 +19,12 @@ from tqdm import tqdm
 from .. import apc as _apc
 from ..kv_quant import from_legacy as kv_quant_from_legacy
 from ..models import cache
-from ..prompt_cache import PromptCacheBundle, PromptCacheContext
+from ..prompt_cache import (
+    PromptCacheBundle,
+    PromptCacheContext,
+    capture_language_model_state,
+    restore_language_model_state,
+)
 from ..prompt_utils import apply_chat_template
 from ..sample_utils import (
     apply_top_k,
@@ -349,6 +354,17 @@ def generate_step(
     if prompt_cache_bundle is not None:
         prompt_cache = prompt_cache_bundle.kv_cache or None
         active_context = prompt_cache_bundle.context
+        if pixel_values is None:
+            restore_language_model_state(model.language_model, prompt_cache_bundle.model_state)
+            if prompt_cache is not None:
+                placeholder_ids = _apc.multimodal_token_ids_from_config(model.config)
+                found = [token for token in sorted(placeholder_ids) if mx.any(input_ids == token).item()]
+                if found:
+                    raise ValueError(
+                        "When reusing a cached prompt with pixel_values=None, input_ids "
+                        "must contain only append-only suffix tokens and must not include "
+                        f"image/video placeholder token ids. Found placeholder token id(s): {found}."
+                    )
 
     # Create the KV cache for generation
     if prompt_cache is None:
@@ -431,8 +447,9 @@ def generate_step(
                     kind="encoder_outputs", data=outputs.encoder_outputs
                 )
 
-            if prompt_cache_bundle is not None and active_context is not None:
+            if prompt_cache_bundle is not None:
                 prompt_cache_bundle.context = active_context
+                prompt_cache_bundle.model_state.update(capture_language_model_state(model.language_model))
             if active_context is not None:
                 if active_context.kind not in ("cross_attention_states", "encoder_outputs"):
                     raise ValueError(f"Unsupported cached context kind: {active_context.kind}")
@@ -460,16 +477,24 @@ def generate_step(
         embedding_output = model.get_input_embeddings(
             input_ids, pixel_values, mask=mask, **kwargs
         )
+        if prompt_cache_bundle is not None and pixel_values is None:
+            restore_language_model_state(model.language_model, prompt_cache_bundle.model_state)
 
         inputs_embeds = embedding_output.inputs_embeds
 
-        kwargs.update(
-            {
-                k: v
-                for k, v in embedding_output.to_dict().items()
-                if k != "inputs_embeds" and v is not None
-            }
-        )
+        embedding_kwargs = {
+            k: v for k, v in embedding_output.to_dict().items() if k != "inputs_embeds" and v is not None
+        }
+        if (
+            prompt_cache_bundle is not None
+            and pixel_values is None
+            and prompt_cache_bundle.model_state.get("rope_deltas") is not None
+        ):
+            # Suffix-only embeddings derive positions from zero; let the LM
+            # combine its cache offset with the restored multimodal RoPE delta.
+            embedding_kwargs.pop("position_ids", None)
+            embedding_kwargs.pop("rope_deltas", None)
+        kwargs.update(embedding_kwargs)
         kwargs.update(explicit_prompt_metadata)
         policy_kwargs = kwargs
         if speculative_prefill_capture_kwargs:

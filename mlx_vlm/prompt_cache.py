@@ -90,8 +90,23 @@ class PromptCacheBundle:
     kv_cache: list[Any]
     tokens_processed: int = 0
     context: PromptCacheContext | None = None
+    model_state: dict[str, Any] = field(default_factory=dict)
     metadata: PromptCacheMetadata = field(default_factory=PromptCacheMetadata)
 
     def __post_init__(self) -> None:
         if self.tokens_processed < 0:
             raise ValueError("tokens_processed must be >= 0")
+
+
+def capture_language_model_state(language_model: Any) -> dict[str, Any]:
+    state: dict[str, Any] = {}
+    if hasattr(language_model, "_rope_deltas"):
+        state["rope_deltas"] = getattr(language_model, "_rope_deltas")
+    return state
+
+
+def restore_language_model_state(language_model: Any, state: Mapping[str, Any]) -> None:
+    if not state:
+        return
+    if hasattr(language_model, "_rope_deltas") and "rope_deltas" in state:
+        setattr(language_model, "_rope_deltas", state["rope_deltas"])
