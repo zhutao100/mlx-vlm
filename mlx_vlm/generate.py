@@ -17,6 +17,7 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizer
 
 from .models import cache
+from .prompt_cache import PromptCacheBundle, PromptCacheContext
 from .prompt_utils import apply_chat_template
 from .turboquant import BatchTurboQuantKVCache, TurboQuantKVCache, turboquant_enabled
 from .utils import (
@@ -684,6 +685,7 @@ def generate_step(
     top_k: int = DEFAULT_TOP_K,
     logit_bias: Optional[Dict[int, float]] = None,
     prompt_cache: Optional[List[Any]] = None,
+    prompt_cache_bundle: Optional[PromptCacheBundle] = None,
     max_kv_size: Optional[int] = None,
     kv_bits: Optional[float] = None,
     kv_group_size: int = DEFAULT_KV_GROUP_SIZE,
@@ -718,6 +720,8 @@ def generate_step(
         top_k (int, optional): Restrict sampling to the top-k tokens.
         logit_bias (dictionary, optional): Additive logit bias.
         prompt_cache (list, optional): Pre-existing KV cache for the prompt.
+        prompt_cache_bundle (PromptCacheBundle, optional): A prompt cache bundle that
+          includes KV cache and multimodal decode context.
         max_kv_size (int, optional): Maximum KV cache size.
         kv_bits (float, optional): Number of bits for KV cache quantization.
         kv_group_size (int): Group size for uniform KV cache quantization.
@@ -772,6 +776,15 @@ def generate_step(
     tokens = mx.array([], dtype=input_ids.dtype)
 
     thinking_budget_criteria = kwargs.pop("thinking_budget_criteria", None)
+    if prompt_cache is not None and prompt_cache_bundle is not None:
+        raise ValueError("Provide only one of prompt_cache or prompt_cache_bundle")
+
+    active_context: Optional[PromptCacheContext] = None
+    if prompt_cache_bundle is not None:
+        prompt_cache = prompt_cache_bundle.kv_cache
+        active_context = prompt_cache_bundle.context
+        if not prompt_cache:
+            prompt_cache = None
 
     # Create the KV cache for generation
     if prompt_cache is None:
@@ -779,6 +792,8 @@ def generate_step(
             model.language_model,
             max_kv_size=max_kv_size,
         )
+        if prompt_cache_bundle is not None:
+            prompt_cache_bundle.kv_cache = prompt_cache
 
     # Speculative decoding setup
     last_outputs = None
@@ -793,7 +808,7 @@ def generate_step(
             lm._rope_deltas = None
 
     def _step(y, inputs_embeds=None):
-        nonlocal tokens, kwargs, last_outputs
+        nonlocal active_context, last_outputs, tokens, kwargs
 
         with mx.stream(generation_stream):
             if "decoder_input_ids" in kwargs:
@@ -824,15 +839,40 @@ def generate_step(
             y = sampler(logprobs)
 
             if outputs.cross_attention_states is not None:
-                kwargs = {"cross_attention_states": outputs.cross_attention_states}
+                active_context = PromptCacheContext(
+                    kind="cross_attention_states",
+                    data=outputs.cross_attention_states,
+                )
             elif outputs.encoder_outputs is not None:
-                kwargs = {"encoder_outputs": outputs.encoder_outputs}
+                active_context = PromptCacheContext(
+                    kind="encoder_outputs",
+                    data=outputs.encoder_outputs,
+                )
+
+            if prompt_cache_bundle is not None and active_context is not None:
+                prompt_cache_bundle.context = active_context
+
+            if active_context is not None:
+                if active_context.kind == "cross_attention_states":
+                    kwargs = {"cross_attention_states": active_context.data}
+                elif active_context.kind == "encoder_outputs":
+                    kwargs = {"encoder_outputs": active_context.data}
+                else:
+                    raise ValueError(f"Unsupported cached context kind: {active_context.kind}")
             else:
                 kwargs = {}
 
             return y, logprobs.squeeze(0)
 
     with mx.stream(generation_stream):
+        if active_context is not None:
+            if active_context.kind == "cross_attention_states":
+                kwargs["cross_attention_states"] = active_context.data
+            elif active_context.kind == "encoder_outputs":
+                kwargs["encoder_outputs"] = active_context.data
+            else:
+                raise ValueError(f"Unsupported cached context kind: {active_context.kind}")
+
         # Get input embeddings (handles both multimodal and text-only)
         embedding_output = model.get_input_embeddings(
             input_ids, pixel_values, mask=mask, **kwargs
