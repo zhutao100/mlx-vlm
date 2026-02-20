@@ -19,6 +19,7 @@ from tqdm import tqdm
 from .. import apc as _apc
 from ..kv_quant import from_legacy as kv_quant_from_legacy
 from ..models import cache
+from ..prompt_cache import PromptCacheBundle, PromptCacheContext
 from ..prompt_utils import apply_chat_template
 from ..sample_utils import (
     apply_top_k,
@@ -210,6 +211,7 @@ def generate_step(
     prompt_cache_checkpoint_lengths: Optional[List[int]] = None,
     seed: Optional[int] = None,
     verbose: bool = False,
+    prompt_cache_bundle: Optional[PromptCacheBundle] = None,
     **kwargs,
 ) -> Generator[Tuple[mx.array, mx.array], None, None]:
     """
@@ -244,6 +246,8 @@ def generate_step(
         top_k (int, optional): Restrict sampling to the top-k tokens.
         logit_bias (dictionary, optional): Additive logit bias.
         prompt_cache (list, optional): Pre-existing KV cache for the prompt.
+        prompt_cache_bundle (PromptCacheBundle, optional): KV cache and reusable
+          multimodal decode context. Cannot be combined with prompt_cache.
         max_kv_size (int, optional): Maximum KV cache size.
         kv_bits (float, optional): Number of bits for KV cache quantization.
         kv_group_size (int): Group size for uniform KV cache quantization.
@@ -339,6 +343,12 @@ def generate_step(
     target_sample_position = 0
 
     thinking_budget_criteria = kwargs.pop("thinking_budget_criteria", None)
+    if prompt_cache is not None and prompt_cache_bundle is not None:
+        raise ValueError("Provide only one of prompt_cache or prompt_cache_bundle")
+    active_context = None
+    if prompt_cache_bundle is not None:
+        prompt_cache = prompt_cache_bundle.kv_cache or None
+        active_context = prompt_cache_bundle.context
 
     # Create the KV cache for generation
     if prompt_cache is None:
@@ -346,6 +356,8 @@ def generate_step(
             model.language_model,
             max_kv_size=max_kv_size,
         )
+        if prompt_cache_bundle is not None:
+            prompt_cache_bundle.kv_cache = prompt_cache
 
     # Speculative decoding setup
     last_outputs = None
@@ -366,7 +378,7 @@ def generate_step(
             lm._rope_deltas = None
 
     def _step(y, inputs_embeds=None):
-        nonlocal kwargs, last_outputs, target_sample_position
+        nonlocal kwargs, last_outputs, target_sample_position, active_context
 
         step_kwargs = {
             **kwargs,
@@ -411,15 +423,30 @@ def generate_step(
             target_sample_position += logprobs.shape[0]
 
             if outputs.cross_attention_states is not None:
-                kwargs = {"cross_attention_states": outputs.cross_attention_states}
+                active_context = PromptCacheContext(
+                    kind="cross_attention_states", data=outputs.cross_attention_states
+                )
             elif outputs.encoder_outputs is not None:
-                kwargs = {"encoder_outputs": outputs.encoder_outputs}
+                active_context = PromptCacheContext(
+                    kind="encoder_outputs", data=outputs.encoder_outputs
+                )
+
+            if prompt_cache_bundle is not None and active_context is not None:
+                prompt_cache_bundle.context = active_context
+            if active_context is not None:
+                if active_context.kind not in ("cross_attention_states", "encoder_outputs"):
+                    raise ValueError(f"Unsupported cached context kind: {active_context.kind}")
+                kwargs = {active_context.kind: active_context.data}
             else:
                 kwargs = {}
 
             return y, logprobs.squeeze(0) if logprobs.shape[0] == 1 else logprobs
 
     with mx.stream(generation_stream):
+        if active_context is not None:
+            if active_context.kind not in ("cross_attention_states", "encoder_outputs"):
+                raise ValueError(f"Unsupported cached context kind: {active_context.kind}")
+            kwargs[active_context.kind] = active_context.data
         # APC may supply position metadata computed from the complete prompt
         # before trimming to an uncached suffix. Embedding helpers see only the
         # suffix and may return local positions, so explicit caller metadata
