@@ -11,6 +11,16 @@ Implemented now:
 - `mlx_vlm/tests/test_prompt_cache_in_generate_step.py` — cached multimodal context reuse,
 - `mlx_vlm/tests/test_prompt_cache_model_state_in_generate_step.py` — LM-state restore and safety checks.
 
+## Model patterns
+
+Not all VLM families expose `cross_attention_states` or `encoder_outputs`. In practice there are a few categories that drive what a prompt-cache bundle must store:
+
+- **Context-tensor models**: require cached `cross_attention_states` or `encoder_outputs` for correct decode when media inputs are not resent.
+- **Embedding-injection models**: media influence is “baked into” the prefix KV cache; no extra decode-time tensors exist.
+- **Embedding-injection + M-RoPE models** (e.g. Qwen*, GLM4V*): correctness depends on mutable per-instance LM state like `language_model._rope_deltas`, which must be captured/restored for safe reuse across sessions/processes.
+
+For safety, reuse must reject media placeholder tokens in `input_ids` when `pixel_values=None` (otherwise embedding-injection families may silently produce incorrect results).
+
 ## Remaining phases
 
 ### Phase 1 — stable Python-level session abstraction

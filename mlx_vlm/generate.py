@@ -17,7 +17,12 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizer
 
 from .models import cache
-from .prompt_cache import PromptCacheBundle, PromptCacheContext
+from .prompt_cache import (
+    PromptCacheBundle,
+    PromptCacheContext,
+    capture_language_model_state,
+    restore_language_model_state,
+)
 from .prompt_utils import apply_chat_template
 from .turboquant import BatchTurboQuantKVCache, TurboQuantKVCache, turboquant_enabled
 from .utils import (
@@ -785,6 +790,37 @@ def generate_step(
         active_context = prompt_cache_bundle.context
         if not prompt_cache:
             prompt_cache = None
+        if pixel_values is None:
+            restore_language_model_state(
+                model.language_model,
+                prompt_cache_bundle.model_state,
+            )
+        if pixel_values is None and prompt_cache is not None:
+            placeholder_token_ids: set[int] = set()
+            for attr in (
+                "image_token_id",
+                "image_token_index",
+                "video_token_id",
+                "video_token_index",
+            ):
+                value = getattr(model.config, attr, None)
+                if value is None:
+                    continue
+                try:
+                    placeholder_token_ids.add(int(value))
+                except (TypeError, ValueError):
+                    continue
+
+            found_placeholder_ids = [
+                token_id for token_id in sorted(placeholder_token_ids) if bool(mx.any(input_ids == token_id).item())
+            ]
+            if found_placeholder_ids:
+                raise ValueError(
+                    "When reusing a cached prompt with pixel_values=None, input_ids "
+                    "must contain only append-only suffix tokens and must not include "
+                    "image/video placeholder token ids. "
+                    f"Found placeholder token id(s): {found_placeholder_ids}."
+                )
 
     # Create the KV cache for generation
     if prompt_cache is None:
@@ -849,8 +885,10 @@ def generate_step(
                     data=outputs.encoder_outputs,
                 )
 
-            if prompt_cache_bundle is not None and active_context is not None:
-                prompt_cache_bundle.context = active_context
+            if prompt_cache_bundle is not None:
+                if active_context is not None:
+                    prompt_cache_bundle.context = active_context
+                prompt_cache_bundle.model_state.update(capture_language_model_state(model.language_model))
 
             if active_context is not None:
                 if active_context.kind == "cross_attention_states":
@@ -877,6 +915,12 @@ def generate_step(
         embedding_output = model.get_input_embeddings(
             input_ids, pixel_values, mask=mask, **kwargs
         )
+
+        if prompt_cache_bundle is not None and pixel_values is None:
+            restore_language_model_state(
+                model.language_model,
+                prompt_cache_bundle.model_state,
+            )
 
         inputs_embeds = embedding_output.inputs_embeds
 
