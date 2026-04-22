@@ -7,7 +7,7 @@ import math
 from io import BytesIO
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -25,6 +25,41 @@ from .trainer.utils import apply_lora_layers
 
 # Modes that support activation quantization
 ACTIVATION_QUANTIZATION_MODES = {"nvfp4", "mxfp8"}
+
+# Quantization modes with fixed group/bits requirements
+FIXED_QUANTIZATION_MODE_GROUP_BITS = {
+    "mxfp4": (32, 4),
+    "nvfp4": (16, 4),
+    "mxfp8": (32, 8),
+}
+
+
+def normalize_fixed_quantization_config(
+    quantization: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Normalize quantization params for modes with fixed (group_size, bits).
+
+    Note: Per-module overrides (dict values keyed by module path) may intentionally
+    use different quantization settings/modes (e.g. affine on sensitive layers).
+    Only normalize overrides that explicitly opt into a fixed quantization mode.
+    """
+    mode = quantization.get("mode")
+    if mode not in FIXED_QUANTIZATION_MODE_GROUP_BITS:
+        return quantization
+
+    group_size, bits = FIXED_QUANTIZATION_MODE_GROUP_BITS[mode]
+    quantization["group_size"] = group_size
+    quantization["bits"] = bits
+
+    for _, params in list(quantization.items()):
+        if isinstance(params, dict):
+            override_mode = params.get("mode")
+            if override_mode in FIXED_QUANTIZATION_MODE_GROUP_BITS:
+                override_group_size, override_bits = FIXED_QUANTIZATION_MODE_GROUP_BITS[override_mode]
+                params["group_size"] = override_group_size
+                params["bits"] = override_bits
+
+    return quantization
 
 # Constants
 MODEL_REMAPPING = {
@@ -97,6 +132,86 @@ def skip_multimodal_module(path: str) -> bool:
         or "code_predictor" in path
         or "img_projector" in path
     )
+
+
+def get_class_predicate(
+    *,
+    skip_vision: bool,
+    quantization: Optional[Dict[str, Any]] = None,
+    weights: Optional[Dict[str, mx.array]] = None,
+) -> Callable[[str, nn.Module], Union[bool, Dict[str, Any]]]:
+    """Build a predicate suitable for ``nn.quantize`` that respects multimodal skips and config overrides."""
+
+    if quantization is None:
+        quantization = {}
+    elif not isinstance(quantization, dict):
+        raise TypeError("quantization must be a dict when provided")
+
+    default_group_size = quantization.get("group_size", 64)
+
+    def _feature_dim(module: nn.Module) -> Optional[int]:
+        weight = getattr(module, "weight", None)
+        shape = getattr(weight, "shape", None)
+        if shape is None or len(shape) == 0:
+            return None
+        try:
+            return int(shape[-1])
+        except (TypeError, ValueError):
+            return None
+
+    def _is_divisible(module: nn.Module, group_size: Optional[int]) -> bool:
+        if group_size in (None, 0):
+            return True
+        if isinstance(group_size, bool):
+            return False
+        feature_dim = _feature_dim(module)
+        if feature_dim is None:
+            return False
+        try:
+            group_size = int(group_size)
+        except (TypeError, ValueError):
+            return False
+        if group_size <= 0:
+            return False
+        return feature_dim % group_size == 0
+
+    def _has_scales(path: str) -> bool:
+        if weights is None:
+            return True
+        return f"{path}.scales" in weights
+
+    def predicate(path: str, module: nn.Module) -> Union[bool, Dict[str, Any]]:
+        if skip_vision and skip_multimodal_module(path):
+            return False
+        # Allow explicit per-path overrides from the config
+        if path in quantization:
+            params = quantization[path]
+            if params is False:
+                return False
+            if not _has_scales(path):
+                return False
+            if isinstance(params, dict):
+                if not hasattr(module, "to_quantized"):
+                    return False
+                if not _is_divisible(module, params.get("group_size", default_group_size)):
+                    return False
+                return params
+            if params is True:
+                if not hasattr(module, "to_quantized"):
+                    return False
+                if not _is_divisible(module, default_group_size):
+                    return False
+            return params
+
+        if not hasattr(module, "to_quantized"):
+            return False
+
+        if not _is_divisible(module, default_group_size):
+            return False
+
+        return _has_scales(path)
+
+    return predicate
 
 
 def get_model_and_args(config: dict):
@@ -192,6 +307,32 @@ def load_model(model_path: Path, lazy: bool = False, **kwargs) -> nn.Module:
     """
     config = load_config(model_path, **kwargs)
 
+    quantization = config.get("quantization")
+    if quantization is None:
+        legacy_quant = config.get("quantization_config")
+        if isinstance(legacy_quant, dict):
+            quant_method = legacy_quant.get("quant_method")
+            if quant_method in ("awq", "gptq", "bitnet"):
+                raise ValueError(
+                    f"Quantization method {quant_method!r} is not supported in mlx_vlm.load_model(). "
+                    "Convert the model to MLX format (or use a pre-converted mlx-community model)."
+                )
+
+        if (
+            isinstance(legacy_quant, dict)
+            and legacy_quant.get("quant_method") is None
+            and "group_size" in legacy_quant
+            and "bits" in legacy_quant
+        ):
+            quantization = legacy_quant
+            config["quantization"] = quantization
+
+    if isinstance(quantization, dict):
+        quantization = normalize_fixed_quantization_config(quantization)
+        if quantization.get("mode") in FIXED_QUANTIZATION_MODE_GROUP_BITS:
+            config["quantization"] = quantization
+            config["quantization_config"] = quantization
+
     # Find all .safetensors files in the model_path, excluding consolidated model weights
     weight_files = [
         wf
@@ -282,12 +423,17 @@ python -m mlx_vlm.convert --hf-path <local_dir> --mlx-path <mlx_dir>
             quantization = None
             if quant_method == "compressed-tensors":
                 quantization = {"group_size": 32, "bits": 4, "mode": "affine"}
-            elif quant_method == "mxfp4":
-                quantization = {"group_size": 32, "bits": 4, "mode": "mxfp4"}
+            elif quant_method in FIXED_QUANTIZATION_MODE_GROUP_BITS:
+                group_size, bits = FIXED_QUANTIZATION_MODE_GROUP_BITS[quant_method]
+                quantization = {
+                    "group_size": group_size,
+                    "bits": bits,
+                    "mode": quant_method,
+                }
             elif quant_method in ("awq", "gptq", "bitnet"):
-                logging.warning(
-                    "Quantization method %s is not supported in mlx_vlm.load_model()",
-                    quant_method,
+                raise ValueError(
+                    f"Quantization method {quant_method!r} is not supported in mlx_vlm.load_model(). "
+                    "Convert the model to MLX format (or use a pre-converted mlx-community model)."
                 )
 
             if quantization is not None:
@@ -295,31 +441,27 @@ python -m mlx_vlm.convert --hf-path <local_dir> --mlx-path <mlx_dir>
                 config["quantization_config"] = quantization
 
     if (quantization := config.get("quantization", None)) is not None:
-        # Handle legacy models which may or may not have vision quantized
-        # TODO: Re-upload the models with the new quantization config and remove this
+        if not isinstance(quantization, dict):
+            raise ValueError(f"Invalid quantization config type: {type(quantization).__name__}")
+        group_size = quantization.get("group_size")
+        bits = quantization.get("bits")
+        if not isinstance(group_size, int) or isinstance(group_size, bool) or group_size <= 0:
+            raise ValueError("Quantization group_size must be a positive integer, got " f"{group_size!r}")
+        if not isinstance(bits, int) or isinstance(bits, bool) or bits <= 0:
+            raise ValueError("Quantization bits must be a positive integer, got " f"{bits!r}")
         skip_vision = config.get("vision_config", {}).get("skip_vision", False)
-
-        def get_class_predicate(p, m):
-            # Always skip vision and audio models
-            if skip_multimodal_module(p) and skip_vision:
-                return False
-            # Handle custom per layer quantizations
-            if p in config["quantization"]:
-                return config["quantization"][p]
-            if not hasattr(m, "to_quantized"):
-                return False
-            # Skip layers not divisible by 64
-            if hasattr(m, "weight") and m.weight.size % 64 != 0:
-                return False
-            # Handle legacy models which may not have everything quantized
-            return f"{p}.scales" in weights
+        class_predicate = get_class_predicate(
+            skip_vision=skip_vision,
+            quantization=quantization,
+            weights=weights,
+        )
 
         nn.quantize(
             model,
-            group_size=quantization["group_size"],
-            bits=quantization["bits"],
-            mode=quantization.get("mode", "affine"),
-            class_predicate=get_class_predicate,
+            group_size=group_size,
+            bits=bits,
+            mode=quantization.get("mode") or "affine",
+            class_predicate=class_predicate,
         )
 
     if kwargs.get("quantize_activations", False):
@@ -402,10 +544,13 @@ def load(
         FileNotFoundError: If config file or safetensors are not found.
         ValueError: If model class or args class are not found.
     """
-    force_download = kwargs.get("force_download", False)
-    model_path = get_model_path(
-        path_or_hf_repo, force_download=force_download, revision=revision
-    )
+    force_download = kwargs.get("force_download") if "force_download" in kwargs else None
+    if force_download is None:
+        model_path = get_model_path(path_or_hf_repo, revision=revision)
+    elif isinstance(force_download, bool):
+        model_path = get_model_path(path_or_hf_repo, force_download=force_download, revision=revision)
+    else:
+        raise ValueError(f"force_download must be a bool when provided, got {type(force_download).__name__}")
     model = load_model(model_path, lazy, **kwargs)
     if adapter_path is not None:
         model = apply_lora_layers(model, adapter_path)
@@ -1225,38 +1370,72 @@ def prepare_inputs(
     return_tensors="mlx",
     **kwargs,
 ):
+    def _is_empty_media(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return value == ""
+        if isinstance(value, (list, tuple)):
+            return len(value) == 0
+        if isinstance(value, (np.ndarray, mx.array)):
+            return value.size == 0
+        return False
 
-    has_images = images is not None and (
-        not hasattr(images, "__len__") or len(images) > 0
-    )
-    has_audio = audio is not None and (not hasattr(audio, "__len__") or len(audio) > 0)
-    has_videos = videos is not None and (
-        not hasattr(videos, "__len__") or len(videos) > 0
-    )
-    if not has_images and not has_audio and not has_videos:
-        tokenizer = (
-            processor.tokenizer if hasattr(processor, "tokenizer") else processor
-        )
-        # Ensure pad_token exists when padding text-only inputs
-        if padding and tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        inputs = tokenizer(
-            prompts,
-            add_special_tokens=add_special_tokens,
-            padding=padding,
-            padding_side=padding_side,
-            return_tensors=return_tensors,
-        )
-        input_ids = (
-            inputs.input_ids
-            if isinstance(inputs.input_ids, mx.array)
-            else mx.array(inputs.input_ids)
-        )
-        mask = (
-            inputs.attention_mask
-            if isinstance(inputs.attention_mask, mx.array)
-            else mx.array(inputs.attention_mask)
-        )
+    if _is_empty_media(images):
+        images = None
+    if _is_empty_media(audio):
+        audio = None
+    if _is_empty_media(videos):
+        videos = None
+
+    if images is None and audio is None and videos is None:
+        tokenizer = getattr(processor, "tokenizer", None)
+        if tokenizer is None or not callable(tokenizer):
+            tokenizer = processor
+
+        call_kwargs = {}
+        try:
+            parameters = inspect.signature(tokenizer).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+
+        if "add_special_tokens" in parameters:
+            call_kwargs["add_special_tokens"] = add_special_tokens
+        if "padding" in parameters:
+            call_kwargs["padding"] = padding
+        if "padding_side" in parameters:
+            call_kwargs["padding_side"] = padding_side
+        if "return_tensors" in parameters:
+            call_kwargs["return_tensors"] = return_tensors
+
+        # If we're going to pad, ensure pad_token exists.
+        will_pad = bool(call_kwargs.get("padding", False))
+        if will_pad and hasattr(tokenizer, "pad_token") and getattr(tokenizer, "pad_token") is None:
+            eos_token = getattr(tokenizer, "eos_token", None)
+            if eos_token is None:
+                raise ValueError("padding=True but tokenizer.pad_token is None and tokenizer.eos_token is unavailable")
+            try:
+                tokenizer.pad_token = eos_token
+            except (AttributeError, TypeError) as exc:
+                raise ValueError("padding=True but tokenizer.pad_token cannot be set") from exc
+
+        inputs = tokenizer(prompts, **call_kwargs)
+
+        raw_input_ids = getattr(inputs, "input_ids", None)
+        raw_attention_mask = getattr(inputs, "attention_mask", None)
+        if isinstance(inputs, dict):
+            raw_input_ids = inputs.get("input_ids", raw_input_ids)
+            raw_attention_mask = inputs.get("attention_mask", raw_attention_mask)
+
+        if raw_input_ids is None or raw_attention_mask is None:
+            raise ValueError("Tokenizer output missing input_ids or attention_mask")
+
+        input_ids = mx.array(raw_input_ids)
+        mask = mx.array(raw_attention_mask)
+        if input_ids.ndim == 1:
+            input_ids = input_ids[None, :]
+        if mask.ndim == 1:
+            mask = mask[None, :]
         return {
             "input_ids": input_ids,
             "attention_mask": mask,
@@ -1333,7 +1512,7 @@ def prepare_inputs(
         is_qwen3_omni_moe = True
 
     is_lossy_audio = False
-    if audio is not None and len(audio) > 0:
+    if audio is not None:
         if not isinstance(audio, list):
             audio = [audio]
 
@@ -1382,7 +1561,7 @@ def prepare_inputs(
             audio = [load_audio(audio_file, sr=sr) for audio_file in audio]
 
     video_fps = None
-    if has_videos:
+    if videos is not None:
         if not isinstance(videos, list):
             videos = [videos]
         fps_hint = kwargs.pop("fps", 2.0)
@@ -1436,7 +1615,7 @@ def prepare_inputs(
             processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
         extra = {}
-        if has_videos:
+        if videos is not None:
             extra["videos"] = videos
             if video_fps is not None:
                 extra["fps"] = video_fps

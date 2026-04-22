@@ -1,4 +1,5 @@
 import base64
+import json
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,8 @@ from mlx_vlm.utils import (
     get_class_predicate,
     load,
     load_image,
+    load_model,
+    normalize_fixed_quantization_config,
     prepare_inputs,
     process_inputs_with_fallback,
     sanitize_weights,
@@ -178,6 +181,31 @@ def test_get_class_predicate():
     assert pred("language_model", DummyModule((10, 64))) is True
     assert pred("vision_model", DummyModule((10, 63))) is False
 
+    # Per-path overrides should be respected (including custom group_size)
+    quantization = {
+        "group_size": 64,
+        "bits": 4,
+        "mode": "affine",
+        "language_model": {"group_size": 32, "bits": 4, "mode": "affine"},
+    }
+    pred = get_class_predicate(skip_vision=False, quantization=quantization)
+    assert pred("language_model", DummyModule((10, 32))) == quantization["language_model"]
+
+    # Legacy partial checkpoints: skip override targets missing scales
+    pred = get_class_predicate(
+        skip_vision=False,
+        quantization=quantization,
+        weights={"other.scales": mx.array([1])},
+    )
+    assert pred("language_model", DummyModule((10, 32))) is False
+
+    class DummyModuleNoQuant:
+        def __init__(self, shape):
+            self.weight = mx.zeros(shape)
+
+    pred = get_class_predicate(skip_vision=False, quantization=quantization)
+    assert pred("language_model", DummyModuleNoQuant((10, 32))) is False
+
 
 def test_quantize_module():
     class DummyModule(nn.Module):
@@ -257,6 +285,64 @@ def test_quantize_module():
         "mode": "affine",
     }
 
+@pytest.mark.parametrize(
+    ("mode", "expected_group_size", "expected_bits"),
+    [
+        ("mxfp4", 32, 4),
+        ("nvfp4", 16, 4),
+        ("mxfp8", 32, 8),
+    ],
+)
+def test_normalize_fixed_quantization_config(mode, expected_group_size, expected_bits):
+    quantization = {
+        "group_size": 64,
+        "bits": 2,
+        "mode": mode,
+        "language_model.affine": {"group_size": 128, "bits": 16, "mode": "affine"},
+        "language_model.fixed": {"group_size": 64, "bits": 2, "mode": mode},
+    }
+
+    normalized = normalize_fixed_quantization_config(quantization)
+    assert normalized is quantization
+    assert quantization["group_size"] == expected_group_size
+    assert quantization["bits"] == expected_bits
+    assert quantization["language_model.affine"] == {"group_size": 128, "bits": 16, "mode": "affine"}
+    assert quantization["language_model.fixed"]["group_size"] == expected_group_size
+    assert quantization["language_model.fixed"]["bits"] == expected_bits
+    assert quantization["language_model.fixed"]["mode"] == mode
+
+
+def test_normalize_fixed_quantization_config_noop_for_affine():
+    quantization = {
+        "group_size": 64,
+        "bits": 4,
+        "mode": "affine",
+        "language_model.linear": {"group_size": 128, "bits": 8},
+    }
+
+    normalized = normalize_fixed_quantization_config(quantization)
+    assert normalized is quantization
+    assert quantization["group_size"] == 64
+    assert quantization["bits"] == 4
+    assert quantization["language_model.linear"] == {"group_size": 128, "bits": 8}
+
+
+def test_load_model_rejects_unsupported_quant_method(tmp_path: Path):
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3_5",
+                "quantization_config": {
+                    "quant_method": "gptq",
+                    "group_size": 128,
+                    "bits": 4,
+                },
+            }
+        )
+    )
+    with pytest.raises(ValueError, match=r"Quantization method 'gptq' is not supported"):
+        load_model(tmp_path, lazy=True)
+
 
 def test_prepare_inputs():
     """Test prepare_inputs function."""
@@ -313,6 +399,29 @@ def test_prepare_inputs():
             prompts="test with <image> token",
             image_token_index=None,
         )
+
+
+def test_prepare_inputs_treats_empty_tuple_as_no_images():
+    processor = MockProcessor()
+    inputs = prepare_inputs(processor, prompts="test", images=(), image_token_index=None)
+    assert mx.array_equal(inputs["input_ids"], mx.array([[1, 2, 3]]))
+
+
+def test_prepare_inputs_accepts_audio_path_object(tmp_path):
+    import numpy as np
+
+    processor = MockProcessor()
+    audio_path = tmp_path / "dummy.wav"
+
+    with patch("mlx_vlm.utils.load_audio", return_value=np.zeros(8, dtype=np.float32)):
+        inputs = prepare_inputs(
+            processor,
+            prompts="test",
+            images=None,
+            audio=audio_path,
+            image_token_index=None,
+        )
+    assert isinstance(inputs["input_ids"], mx.array)
 
 
 def test_process_inputs_with_fallback():
@@ -465,7 +574,10 @@ class TestLoadImage:
             "mlx_vlm.utils.requests.get",
             side_effect=Exception("Connection error"),
         ):
-            with pytest.raises(ValueError, match="Failed to load image from URL"):
+            with pytest.raises(
+                ValueError,
+                match=r"Failed to load image from https://example\.com/nonexistent\.png",
+            ):
                 load_image("https://example.com/nonexistent.png")
 
     def test_nonexistent_file_raises(self):
