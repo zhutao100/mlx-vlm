@@ -11,6 +11,7 @@ from mlx.utils import tree_map_with_path
 
 from .quant_utils import get_quantization_params
 from .utils import (
+    FIXED_QUANTIZATION_MODE_GROUP_BITS,
     MODEL_CONVERSION_DTYPES,
     create_model_card,
     fetch_from_hub,
@@ -356,6 +357,16 @@ def convert(
     if quantize:
         from .quant_utils import quantize_model
 
+        if q_mode in FIXED_QUANTIZATION_MODE_GROUP_BITS:
+            required_group_size, required_bits = FIXED_QUANTIZATION_MODE_GROUP_BITS[q_mode]
+            if q_group_size != required_group_size or q_bits != required_bits:
+                print(
+                    f"[INFO] {q_mode.upper()} quantization forces group_size={required_group_size} "
+                    f"and bits={required_bits}; overriding user-specified values."
+                )
+                q_group_size = required_group_size
+                q_bits = required_bits
+
         _preserve_existing_deepseek_v4_quantization(
             config, target, q_group_size, q_bits, q_mode
         )
@@ -522,13 +533,13 @@ def configure_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--q-group-size",
-        help="Group size for quantization.",
+        help="Group size for quantization (ignored for mxfp4/nvfp4/mxfp8).",
         type=int,
         default=None,
     )
     parser.add_argument(
         "--q-bits",
-        help="Bits per weight for quantization.",
+        help="Bits per weight for quantization (ignored for mxfp4/nvfp4/mxfp8).",
         type=int,
         default=None,
     )
