@@ -3,6 +3,7 @@ import codecs
 import contextlib
 import functools
 import json
+import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -274,8 +275,16 @@ def normalize_resize_shape(
     return (values[0], values[0]) if len(values) == 1 else tuple(values)
 
 
-# A stream on the default device just for generation
-generation_stream = mx.new_stream(mx.default_device())
+# A stream on the default device just for generation (thread-local).
+_generation_stream_local = threading.local()
+
+
+def _get_generation_stream():
+    stream = getattr(_generation_stream_local, "stream", None)
+    if stream is None:
+        stream = mx.new_stream(mx.default_device())
+        _generation_stream_local.stream = stream
+    return stream
 
 
 def maybe_quantize_kv_cache(
@@ -495,14 +504,14 @@ def _dflash_rounds(
             break
 
         # Draft
-        with mx.stream(generation_stream):
+        with mx.stream(_get_generation_stream()):
             draft_tokens = draft_model.draft_block(
                 b, hidden, draft_cache, bs, sampler, token_dtype
             )
         mx.async_eval(draft_tokens)
 
         # Verify
-        with mx.stream(generation_stream):
+        with mx.stream(_get_generation_stream()):
             verify_input = mx.concatenate(
                 [mx.array([[b]], dtype=token_dtype), draft_tokens],
                 axis=1,
@@ -602,14 +611,14 @@ def _dflash_rounds_batch(
         b_arr = mx.array(b_active, dtype=token_dtype)
 
         # Draft
-        with mx.stream(generation_stream):
+        with mx.stream(_get_generation_stream()):
             draft_tokens = draft_model.draft_block(
                 b_arr, hidden, draft_cache, bs, sampler, token_dtype
             )
         mx.async_eval(draft_tokens)
 
         # Verify
-        with mx.stream(generation_stream):
+        with mx.stream(_get_generation_stream()):
             verify_input = mx.concatenate([b_arr[:, None], draft_tokens], axis=1)
             verify_out = lm(
                 verify_input,
@@ -846,7 +855,7 @@ def generate_step(
     def _step(y, inputs_embeds=None):
         nonlocal active_context, last_outputs, tokens, kwargs
 
-        with mx.stream(generation_stream):
+        with mx.stream(_get_generation_stream()):
             if "decoder_input_ids" in kwargs:
                 outputs = model.language_model(
                     cache=prompt_cache,
@@ -902,7 +911,7 @@ def generate_step(
 
             return y, logprobs.squeeze(0)
 
-    with mx.stream(generation_stream):
+    with mx.stream(_get_generation_stream()):
         if active_context is not None:
             if active_context.kind == "cross_attention_states":
                 kwargs["cross_attention_states"] = active_context.data
@@ -1172,7 +1181,7 @@ def stream_generate(
 
     total_prompt_tokens = reused_prefix_len + input_ids.size
 
-    with wired_limit(model, [generation_stream]):
+    with wired_limit(model, [_get_generation_stream()]):
         detokenizer = processor.detokenizer
         detokenizer.reset()
         thinking_criteria = getattr(tokenizer, "thinking_budget_criteria", None)
@@ -1969,7 +1978,7 @@ class BatchGenerator:
         self._steps_counter = 0
 
         self._wire_stack = contextlib.ExitStack()
-        self._wire_stack.enter_context(wired_limit(model, [generation_stream]))
+        self._wire_stack.enter_context(wired_limit(model, [_get_generation_stream()]))
 
     def close(self):
         if self._wire_stack is not None:
@@ -2005,7 +2014,7 @@ class BatchGenerator:
 
     def remove(self, uid) -> bool:
         """Remove a sequence from the batch by uid."""
-        with mx.stream(generation_stream):
+        with mx.stream(_get_generation_stream()):
             # Waiting in the queue.
             for i, (seq_uid, _, _, _) in enumerate(self._unprocessed_sequences):
                 if seq_uid == uid:
@@ -2165,7 +2174,7 @@ class BatchGenerator:
         return prompt_responses, generation_responses
 
     def next(self, **kwargs):
-        with mx.stream(generation_stream):
+        with mx.stream(_get_generation_stream()):
             return self._next(**kwargs)
 
 
