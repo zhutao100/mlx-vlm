@@ -4,6 +4,8 @@ from typing import Any, Callable, Protocol, TypedDict
 
 import mlx.core as mx
 
+from ..prompt_cache import PromptCacheBundle
+
 try:
     from typing import Unpack as Unpack
 except ImportError:  # pragma: no cover - Python 3.10 compatibility
@@ -31,6 +33,7 @@ class GenerateKwargs(TypedDict, total=False):
     top_k: int | None
     logit_bias: dict[int, float] | None
     prompt_cache: list[Any] | None
+    prompt_cache_bundle: PromptCacheBundle | None
     max_kv_size: int | None
     kv_bits: float | None
     kv_key_bits: float | None

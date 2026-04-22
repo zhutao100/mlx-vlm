@@ -868,6 +868,12 @@ def stream_generate(
     prompt_cache_state = kwargs.pop("prompt_cache_state", None)
     apc_manager: Optional[_apc.APCManager] = kwargs.pop("apc_manager", None)
     apc_tenant: Optional[str] = kwargs.pop("apc_tenant", None)
+    prompt_cache_bundle = kwargs.get("prompt_cache_bundle")
+    if prompt_cache_bundle is not None:
+        if prompt_cache_state is not None:
+            raise ValueError("Provide only one of prompt_cache_state or prompt_cache_bundle")
+        if apc_manager is not None:
+            raise ValueError("Provide only one of apc_manager or prompt_cache_bundle")
     image = image or None
     audio = audio or None
     video = video or None
@@ -1054,13 +1060,15 @@ def stream_generate(
     else:
         tokenizer.thinking_budget_criteria = None
 
-    # Ensure we have a prompt_cache we can track for reuse.
-    if "prompt_cache" not in kwargs:
-        kwargs["prompt_cache"] = cache.make_prompt_cache(
-            model.language_model,
-            max_kv_size=kwargs.get("max_kv_size", None),
-        )
-    tracked_cache = kwargs["prompt_cache"]
+    tracked_cache = None
+    if prompt_cache_bundle is None:
+        # Ensure we have a prompt_cache we can track for reuse.
+        if "prompt_cache" not in kwargs:
+            kwargs["prompt_cache"] = cache.make_prompt_cache(
+                model.language_model,
+                max_kv_size=kwargs.get("max_kv_size", None),
+            )
+        tracked_cache = kwargs["prompt_cache"]
 
     total_prompt_tokens = reused_prefix_len + input_ids.size
 
@@ -1179,7 +1187,7 @@ def stream_generate(
 
         # Save cache state for potential reuse on next turn
         all_ids: Optional[List[int]] = None
-        if prompt_cache_state is not None:
+        if prompt_cache_state is not None and tracked_cache is not None:
             all_ids = full_input_ids_list + [
                 t.item() if hasattr(t, "item") else t for t in generated_tokens
             ]
