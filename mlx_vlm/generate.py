@@ -1122,6 +1122,9 @@ def stream_generate(
 
     # Prompt cache reuse: skip common prefix from previous turn
     prompt_cache_state = kwargs.pop("prompt_cache_state", None)
+    prompt_cache_bundle = kwargs.get("prompt_cache_bundle", None)
+    if prompt_cache_state is not None and prompt_cache_bundle is not None:
+        raise ValueError("Provide only one of prompt_cache_state or prompt_cache_bundle")
     reused_prefix_len = 0
     full_input_ids_list = input_ids.flatten().tolist()
 
@@ -1171,13 +1174,15 @@ def stream_generate(
     else:
         tokenizer.thinking_budget_criteria = None
 
-    # Ensure we have a prompt_cache we can track for reuse.
-    if "prompt_cache" not in kwargs:
-        kwargs["prompt_cache"] = cache.make_prompt_cache(
-            model.language_model,
-            max_kv_size=kwargs.get("max_kv_size", None),
-        )
-    tracked_cache = kwargs["prompt_cache"]
+    tracked_cache = None
+    if prompt_cache_bundle is None:
+        # Ensure we have a prompt_cache we can track for reuse.
+        if "prompt_cache" not in kwargs:
+            kwargs["prompt_cache"] = cache.make_prompt_cache(
+                model.language_model,
+                max_kv_size=kwargs.get("max_kv_size", None),
+            )
+        tracked_cache = kwargs["prompt_cache"]
 
     total_prompt_tokens = reused_prefix_len + input_ids.size
 
@@ -1234,7 +1239,7 @@ def stream_generate(
         )
 
         # Save cache state for potential reuse on next turn
-        if prompt_cache_state is not None:
+        if prompt_cache_state is not None and tracked_cache is not None:
             all_ids = full_input_ids_list + [
                 t.item() if hasattr(t, "item") else t for t in generated_tokens
             ]
