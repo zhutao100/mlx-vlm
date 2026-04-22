@@ -1,20 +1,27 @@
+# .pre-commit-config.yaml
 repos:
--   repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 24.2.0
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
     hooks:
-    -   id: black
--   repo: https://github.com/pycqa/isort
-    rev: 5.13.2
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/akaihola/darker
+    rev: v3.0.0
     hooks:
-    -   id: isort
+      - id: darker
         args:
-            - --profile=black
--   repo: https://github.com/PyCQA/autoflake
-    rev: v2.2.1
+          - --line-length=120
+        additional_dependencies:
+          - black
+
+  - repo: https://github.com/pycqa/isort
+    rev: 7.0.0
     hooks:
-    -   id: autoflake
-        args:
-            - --in-place
-            - --remove-all-unused-imports
-            - --ignore-init-module-imports
-            - --exclude=mlx_vlm/models/base.py,mlx_vlm/models/cache.py
+      - id: isort
+        args: [ --profile=black ]
